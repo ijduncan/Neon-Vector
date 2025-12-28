@@ -19,6 +19,9 @@ export class MainScene extends window.Phaser.Scene {
   private bossArrived: boolean = false;
   private bossHealth: number = 0;
   private bossMaxHealth: number = 600; 
+  private bossSweepAngle: number = 0;
+  private bossSweepDir: number = 1;
+  private lastBossFired: number = 0;
   private readonly BOSS_SPAWN_TIME = 60000; 
   
   // Environment
@@ -90,6 +93,9 @@ export class MainScene extends window.Phaser.Scene {
     this.matchStartTime = -1;
     this.isLowAltitude = false;
     this.bossInstance = null;
+    this.bossSweepAngle = 0;
+    this.bossSweepDir = 1;
+    this.lastBossFired = 0;
   }
 
   create() {
@@ -109,7 +115,6 @@ export class MainScene extends window.Phaser.Scene {
     this.enemyBullets = this.physics.add.group({ classType: window.Phaser.Physics.Arcade.Image, maxSize: 500 });
     this.enemies = this.physics.add.group();
     this.powerups = this.physics.add.group({ classType: window.Phaser.Physics.Arcade.Image });
-    // Switch to dynamic group for the boss to prevent "flickering" issues with static bodies and tweens
     this.bossGroup = this.physics.add.group(); 
 
     // 3. Player
@@ -128,7 +133,6 @@ export class MainScene extends window.Phaser.Scene {
     this.physics.add.overlap(this.player, this.enemyBullets, this.hitPlayer, undefined, this);
     this.physics.add.overlap(this.player, this.powerups, this.collectPowerup, undefined, this);
     
-    // Boss collisions - ensuring player bullets are processed
     this.physics.add.overlap(this.playerBullets, this.bossGroup, this.hitBoss, undefined, this);
     this.physics.add.overlap(this.player, this.bossGroup, (player: any, boss: any) => {
         if (!this.isLowAltitude) this.takeDamage(1);
@@ -176,7 +180,6 @@ export class MainScene extends window.Phaser.Scene {
     this.starfield.tilePositionY -= this.scrollSpeed;
     this.handlePlayerControl();
     
-    // Improved recycling logic
     this.playerBullets.getChildren().forEach((b: any) => {
         if (b.active && (b.y < -100 || b.y > GAME_HEIGHT + 100 || b.x < -100 || b.x > GAME_WIDTH + 100)) {
             b.setActive(false).setVisible(false);
@@ -268,7 +271,6 @@ export class MainScene extends window.Phaser.Scene {
           b.setData('isLow', this.isLowAltitude); 
           b.setScale(this.isLowAltitude ? 0.5 : 1); 
           b.setAlpha(this.isLowAltitude ? 0.6 : 1); 
-          // Set bullet depth higher than boss (15) so they don't get obfuscated
           b.setDepth(16);
         }
     };
@@ -355,14 +357,10 @@ export class MainScene extends window.Phaser.Scene {
 
   private spawnBoss() {
     this.bossHealth = this.bossMaxHealth;
-    
-    // Create boss ship directly in the scene as a physics sprite
     this.bossInstance = this.physics.add.sprite(GAME_WIDTH/2, -150, 'bossShip');
     this.bossInstance.setRotation(Math.PI).setDepth(15);
     this.bossInstance.setImmovable(true);
     this.bossGroup.add(this.bossInstance);
-    
-    // Set a better collision area
     this.bossInstance.body.setCircle(60, 20, 10); 
 
     this.bossHealthBg.setVisible(true);
@@ -370,7 +368,6 @@ export class MainScene extends window.Phaser.Scene {
     this.bossHealthBar.width = 200;
     this.bossLabel.setVisible(true);
     
-    // Smooth entry tween
     this.tweens.add({ 
         targets: this.bossInstance, 
         y: 180, 
@@ -387,35 +384,44 @@ export class MainScene extends window.Phaser.Scene {
   private updateBoss(time: number, delta: number) {
       if (!this.bossInstance || !this.bossInstance.active) return;
       
-      // Steady side movement after arrival
       const targetX = (GAME_WIDTH/2) + Math.sin(time / 2000) * 140;
       this.bossInstance.x = targetX;
+      this.bossInstance.body.updateFromGameObject();
+
+      // Rotating sweep pattern back and forth
+      const sweepSpeed = 0.04;
+      this.bossSweepAngle += sweepSpeed * this.bossSweepDir;
+      if (this.bossSweepAngle >= Math.PI) {
+          this.bossSweepAngle = Math.PI;
+          this.bossSweepDir = -1;
+      } else if (this.bossSweepAngle <= 0) {
+          this.bossSweepAngle = 0;
+          this.bossSweepDir = 1;
+      }
       
-      // Rapid fire shooting
-      if (Math.random() < 0.12) {
-          const l = this.enemyBullets.get(this.bossInstance.x + window.Phaser.Math.Between(-40, 40), this.bossInstance.y + 60, 'bossLaser');
+      // High frequency stream shooting in the current sweep angle
+      if (time > this.lastBossFired) {
+          const l = this.enemyBullets.get(this.bossInstance.x, this.bossInstance.y + 50, 'bossLaser');
           if (l) { 
+            const projectileSpeed = 420;
             l.enableBody(true, l.x, l.y, true, true); 
-            l.setVelocity(window.Phaser.Math.Between(-120, 120), 450); 
+            l.setVelocity(Math.cos(this.bossSweepAngle) * projectileSpeed, Math.sin(this.bossSweepAngle) * projectileSpeed); 
             l.setData('isLow', false); 
             l.setScale(1.5);
-            l.setDepth(14); // Slightly below boss but above player
+            l.setDepth(14);
           }
+          this.lastBossFired = time + 85; 
       }
   }
 
   private hitBoss(bullet: any, boss: any) {
     if (bullet.getData('isLow')) return;
-    
     bullet.setActive(false).setVisible(false).disableBody(true, true);
-    
-    // Logic for boss hits - boss only hit if arrived or visible
     if (!this.bossInstance || !this.bossInstance.active) return;
     
     this.bossHealth--;
     this.bossHealthBar.width = 200 * Math.max(0, this.bossHealth / this.bossMaxHealth);
     
-    // Hit flash effect to prevent "disappearing" feel
     this.bossInstance.setTint(0xffffff);
     this.time.delayedCall(50, () => {
         if (this.bossInstance && this.bossInstance.active) this.bossInstance.clearTint();
@@ -434,7 +440,6 @@ export class MainScene extends window.Phaser.Scene {
     this.bossArrived = false;
     this.explode(this.bossInstance.x, this.bossInstance.y, COLORS.NEON_YELLOW);
     
-    // Massive death sequence
     for(let i=0; i<20; i++) {
         this.time.delayedCall(i * 150, () => {
             if (this.bossInstance) {
@@ -466,7 +471,6 @@ export class MainScene extends window.Phaser.Scene {
         align: 'center'
     }).setOrigin(0.5).setDepth(40);
     
-    // Redirect to personal site
     this.time.delayedCall(4500, () => {
         window.location.href = 'https://ianjamesduncan.com';
     });
@@ -491,7 +495,7 @@ export class MainScene extends window.Phaser.Scene {
 
   private handleDeath() {
     this.lives--; this.livesText.setText(`LIVES: ${this.lives}`);
-    this.weaponLevel = Math.max(1, this.weaponLevel - 2); // Slightly more punishing on death
+    this.weaponLevel = Math.max(1, this.weaponLevel - 2); 
     if (this.lives > 0) { 
         this.health = 100; 
         this.healthBar.width = 140; 
@@ -499,7 +503,6 @@ export class MainScene extends window.Phaser.Scene {
         this.isLowAltitude = false;
         this.player.setScale(1).setAlpha(1);
         this.altitudeText.setText('ALT: HIGH').setColor('#ffeb3b');
-        // Briefly invincible
         this.player.setAlpha(0.5);
         this.time.delayedCall(2000, () => this.player.setAlpha(1));
     }

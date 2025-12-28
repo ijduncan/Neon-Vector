@@ -69,7 +69,7 @@ const App: React.FC = () => {
             rel="noopener noreferrer"
             className="px-4 py-2 bg-[#ffeb3b] border-2 border-[#00bcd4] text-[#00bcd4] font-black text-[10px] md:text-xs hover:bg-[#00bcd4] hover:text-[#ffeb3b] transition-all rounded shadow-md pointer-events-auto"
           >
-            SKIP GAME &gt;&gt;
+            SKIP GAME {'>>'}
           </a>
       </div>
 

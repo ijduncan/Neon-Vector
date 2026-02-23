@@ -148,7 +148,7 @@ const App: React.FC = () => {
       {/* Footer (Outside Game Window) */}
       <div className="w-full flex justify-center items-center py-4 z-40 relative">
         <div className="text-[10px] md:text-xs text-[#00bcd4] font-black tracking-widest text-center uppercase italic">
-          IAN JAMES DUNCAN // NEON_VECTOR // V1.0
+          IAN JAMES DUNCAN // NEON_VECTOR // V1.1
         </div>
       </div>
     </div>

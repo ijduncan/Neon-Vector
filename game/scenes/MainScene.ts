@@ -373,12 +373,15 @@ export class MainScene extends window.Phaser.Scene {
 
   private spawnBoss() {
     this.bossHealth = this.bossMaxHealth;
-    this.bossInstance = this.physics.add.image(GAME_WIDTH / 2, -150, 'bossShip');
+    // Use add.image so the group controls the physics body — avoids double-body ghosting
+    this.bossInstance = this.add.image(GAME_WIDTH / 2, -150, 'bossShip');
     this.bossInstance.setRotation(Math.PI).setDepth(15);
+    this.bossGroup.add(this.bossInstance);
     this.bossInstance.body.setAllowGravity(false);
     this.bossInstance.body.setImmovable(true);
     this.bossInstance.body.setCircle(60, 20, 10);
-    this.bossGroup.add(this.bossInstance);
+    // Disable physics body during entrance tween so it doesn't desync from sprite
+    this.bossInstance.body.enable = false;
 
     this.bossHealthBg.setVisible(true);
     this.bossHealthBar.setVisible(true);
@@ -398,6 +401,9 @@ export class MainScene extends window.Phaser.Scene {
         onComplete: () => {
             if (this.bossInstance && this.bossInstance.active) {
                 this.bossArrived = true;
+                // Enable and sync physics body now that sprite is in position
+                this.bossInstance.body.enable = true;
+                this.bossInstance.body.reset(this.bossInstance.x, this.bossInstance.y);
             }
         }
     });
@@ -446,14 +452,14 @@ export class MainScene extends window.Phaser.Scene {
     this.bossInstance.body.reset(this.bossInstance.x, this.bossInstance.y);
 
     // Fire rate increases as health drops
-    const baseFireInterval = 90;
-    const fireInterval = baseFireInterval * (0.4 + healthRatio * 0.6);
+    const baseFireInterval = 240;
+    const fireInterval = baseFireInterval * (0.5 + healthRatio * 0.5);
 
     if (time <= this.lastBossFired) return;
 
     const bx = this.bossInstance.x;
     const by = this.bossInstance.y + 50;
-    const projectileSpeed = 350 + (1 - healthRatio) * 150;
+    const projectileSpeed = 280 + (1 - healthRatio) * 120;
 
     switch (this.bossPhase) {
       case 'sweep': {
@@ -480,7 +486,7 @@ export class MainScene extends window.Phaser.Scene {
         }
         this.bossBurstCount++;
         // 2-3 bursts then switch
-        this.lastBossFired = time + 450 + Math.random() * 300;
+        this.lastBossFired = time + 900 + Math.random() * 400;
         if (this.bossBurstCount >= (healthRatio < 0.5 ? 4 : 3)) {
           this.bossPhaseTimer = 0; // force phase switch
         }

@@ -39,7 +39,7 @@ const App: React.FC = () => {
             </h3>
             <div className="text-black leading-relaxed text-sm space-y-4 font-bold">
               <p className="uppercase">
-                Welcome to my site. I vibe coded this game in Google AI Studio for your pleasure. It's deployed via github on a platform called Vercel. Feel free to skip to my portfolio site by clicking skip game.
+                Welcome to my site. I vibe coded this game in Google AI Studio and VSCode using Claude Code for your pleasure. It's deployed via GitHub on a platform called Vercel. Feel free to skip to my portfolio site by clicking skip game.
               </p>
             </div>
             <div className="mt-8 text-center">

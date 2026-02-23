@@ -18,11 +18,20 @@ export class MainScene extends window.Phaser.Scene {
   private isBossActive: boolean = false;
   private bossArrived: boolean = false;
   private bossHealth: number = 0;
-  private bossMaxHealth: number = 600; 
-  private bossSweepAngle: number = 0;
-  private bossSweepDir: number = 1;
+  private bossMaxHealth: number = 600;
   private lastBossFired: number = 0;
-  private readonly BOSS_SPAWN_TIME = 60000; 
+  private readonly BOSS_SPAWN_TIME = 60000;
+
+  // Boss attack state
+  private bossPhase: 'sweep' | 'burst' | 'aimed' | 'spiral' = 'sweep';
+  private bossPhaseTimer: number = 0;
+  private bossPhaseDuration: number = 0;
+  private bossSweepAngle: number = 0;
+  private bossSweepSpeed: number = 0.04;
+  private bossSweepDir: number = 1;
+  private bossSpiralAngle: number = 0;
+  private bossBurstCount: number = 0;
+  private bossMoveTarget: number = GAME_WIDTH / 2;
   
   // Environment
   private starfield!: any;
@@ -94,7 +103,14 @@ export class MainScene extends window.Phaser.Scene {
     this.isLowAltitude = false;
     this.bossInstance = null;
     this.bossSweepAngle = 0;
+    this.bossSweepSpeed = 0.04;
     this.bossSweepDir = 1;
+    this.bossSpiralAngle = 0;
+    this.bossBurstCount = 0;
+    this.bossMoveTarget = GAME_WIDTH / 2;
+    this.bossPhase = 'sweep';
+    this.bossPhaseTimer = 0;
+    this.bossPhaseDuration = 0;
     this.lastBossFired = 0;
   }
 
@@ -357,21 +373,27 @@ export class MainScene extends window.Phaser.Scene {
 
   private spawnBoss() {
     this.bossHealth = this.bossMaxHealth;
-    this.bossInstance = this.physics.add.sprite(GAME_WIDTH/2, -150, 'bossShip');
+    this.bossInstance = this.physics.add.image(GAME_WIDTH / 2, -150, 'bossShip');
     this.bossInstance.setRotation(Math.PI).setDepth(15);
-    this.bossInstance.setImmovable(true);
+    this.bossInstance.body.setAllowGravity(false);
+    this.bossInstance.body.setImmovable(true);
+    this.bossInstance.body.setCircle(60, 20, 10);
     this.bossGroup.add(this.bossInstance);
-    this.bossInstance.body.setCircle(60, 20, 10); 
 
     this.bossHealthBg.setVisible(true);
     this.bossHealthBar.setVisible(true);
     this.bossHealthBar.width = 200;
     this.bossLabel.setVisible(true);
-    
-    this.tweens.add({ 
-        targets: this.bossInstance, 
-        y: 180, 
-        duration: 4000, 
+
+    this.bossPhase = 'sweep';
+    this.bossPhaseTimer = 0;
+    this.bossPhaseDuration = 3000;
+    this.bossMoveTarget = GAME_WIDTH / 2;
+
+    this.tweens.add({
+        targets: this.bossInstance,
+        y: 180,
+        duration: 4000,
         ease: 'Cubic.easeInOut',
         onComplete: () => {
             if (this.bossInstance && this.bossInstance.active) {
@@ -381,37 +403,126 @@ export class MainScene extends window.Phaser.Scene {
     });
   }
 
-  private updateBoss(time: number, delta: number) {
-      if (!this.bossInstance || !this.bossInstance.active) return;
-      
-      const targetX = (GAME_WIDTH/2) + Math.sin(time / 2000) * 140;
-      this.bossInstance.x = targetX;
-      this.bossInstance.body.updateFromGameObject();
+  private pickBossPhase(time: number) {
+    const healthRatio = this.bossHealth / this.bossMaxHealth;
+    const phases: Array<'sweep' | 'burst' | 'aimed' | 'spiral'> = ['sweep', 'burst', 'aimed', 'spiral'];
+    // Remove current phase so we always switch to something different
+    const candidates = phases.filter(p => p !== this.bossPhase);
+    this.bossPhase = candidates[Math.floor(Math.random() * candidates.length)];
+    this.bossPhaseTimer = time;
+    this.bossBurstCount = 0;
+    this.bossSpiralAngle = Math.random() * Math.PI * 2;
 
-      // Rotating sweep pattern back and forth
-      const sweepSpeed = 0.04;
-      this.bossSweepAngle += sweepSpeed * this.bossSweepDir;
-      if (this.bossSweepAngle >= Math.PI) {
-          this.bossSweepAngle = Math.PI;
-          this.bossSweepDir = -1;
-      } else if (this.bossSweepAngle <= 0) {
-          this.bossSweepAngle = 0;
-          this.bossSweepDir = 1;
+    // Phases get shorter as boss gets weaker (more frantic switching)
+    this.bossPhaseDuration = 2500 + Math.random() * 2000;
+    if (healthRatio < 0.5) this.bossPhaseDuration *= 0.7;
+    if (healthRatio < 0.25) this.bossPhaseDuration *= 0.6;
+
+    // Randomize sweep direction and speed each time
+    this.bossSweepDir = Math.random() > 0.5 ? 1 : -1;
+    this.bossSweepSpeed = 0.03 + Math.random() * 0.04;
+    this.bossSweepAngle = Math.random() * Math.PI;
+
+    // Pick a new horizontal move target
+    this.bossMoveTarget = window.Phaser.Math.Between(80, GAME_WIDTH - 80);
+  }
+
+  private updateBoss(time: number, _delta: number) {
+    if (!this.bossInstance || !this.bossInstance.active) return;
+    const healthRatio = this.bossHealth / this.bossMaxHealth;
+
+    // Switch attack phase when timer expires
+    if (time - this.bossPhaseTimer > this.bossPhaseDuration) {
+      this.pickBossPhase(time);
+    }
+
+    // Horizontal movement — lerp toward a random target, pick new one when close
+    const dx = this.bossMoveTarget - this.bossInstance.x;
+    const moveSpeed = (2 + (1 - healthRatio) * 3);
+    if (Math.abs(dx) < 5) {
+      this.bossMoveTarget = window.Phaser.Math.Between(80, GAME_WIDTH - 80);
+    }
+    this.bossInstance.x += Math.sign(dx) * Math.min(Math.abs(dx), moveSpeed);
+    this.bossInstance.body.reset(this.bossInstance.x, this.bossInstance.y);
+
+    // Fire rate increases as health drops
+    const baseFireInterval = 90;
+    const fireInterval = baseFireInterval * (0.4 + healthRatio * 0.6);
+
+    if (time <= this.lastBossFired) return;
+
+    const bx = this.bossInstance.x;
+    const by = this.bossInstance.y + 50;
+    const projectileSpeed = 350 + (1 - healthRatio) * 150;
+
+    switch (this.bossPhase) {
+      case 'sweep': {
+        // Sweep back and forth with randomized speed
+        this.bossSweepAngle += this.bossSweepSpeed * this.bossSweepDir;
+        if (this.bossSweepAngle >= Math.PI) { this.bossSweepAngle = Math.PI; this.bossSweepDir = -1; }
+        else if (this.bossSweepAngle <= 0) { this.bossSweepAngle = 0; this.bossSweepDir = 1; }
+        this.fireBossProjectile(bx, by, this.bossSweepAngle, projectileSpeed);
+        // Below 50% health, fire a mirrored shot
+        if (healthRatio < 0.5) {
+          this.fireBossProjectile(bx, by, Math.PI - this.bossSweepAngle, projectileSpeed * 0.9);
+        }
+        this.lastBossFired = time + fireInterval;
+        break;
       }
-      
-      // High frequency stream shooting in the current sweep angle
-      if (time > this.lastBossFired) {
-          const l = this.enemyBullets.get(this.bossInstance.x, this.bossInstance.y + 50, 'bossLaser');
-          if (l) { 
-            const projectileSpeed = 420;
-            l.enableBody(true, l.x, l.y, true, true); 
-            l.setVelocity(Math.cos(this.bossSweepAngle) * projectileSpeed, Math.sin(this.bossSweepAngle) * projectileSpeed); 
-            l.setData('isLow', false); 
-            l.setScale(1.5);
-            l.setDepth(14);
+      case 'burst': {
+        // Fire a fan of projectiles in a burst, then pause
+        const fanCount = healthRatio < 0.5 ? 7 : 5;
+        const spread = Math.PI * 0.6;
+        const startAngle = (Math.PI / 2) - spread / 2 + (Math.random() - 0.5) * 0.4;
+        for (let i = 0; i < fanCount; i++) {
+          const angle = startAngle + (spread / (fanCount - 1)) * i;
+          this.fireBossProjectile(bx, by, angle, projectileSpeed * (0.85 + Math.random() * 0.3));
+        }
+        this.bossBurstCount++;
+        // 2-3 bursts then switch
+        this.lastBossFired = time + 450 + Math.random() * 300;
+        if (this.bossBurstCount >= (healthRatio < 0.5 ? 4 : 3)) {
+          this.bossPhaseTimer = 0; // force phase switch
+        }
+        break;
+      }
+      case 'aimed': {
+        // Fire directly at the player with some random spread
+        if (this.player && this.player.active) {
+          const angle = window.Phaser.Math.Angle.Between(bx, by, this.player.x, this.player.y);
+          const jitter = (Math.random() - 0.5) * 0.35;
+          this.fireBossProjectile(bx, by, angle + jitter, projectileSpeed * 1.1);
+          // Double shot at low health
+          if (healthRatio < 0.35) {
+            this.fireBossProjectile(bx, by, angle - jitter, projectileSpeed);
           }
-          this.lastBossFired = time + 85; 
+        }
+        this.lastBossFired = time + fireInterval * 1.2;
+        break;
       }
+      case 'spiral': {
+        // Rotating spiral pattern
+        const arms = healthRatio < 0.4 ? 3 : 2;
+        for (let i = 0; i < arms; i++) {
+          const angle = this.bossSpiralAngle + (Math.PI * 2 / arms) * i;
+          this.fireBossProjectile(bx, by, angle, projectileSpeed * 0.85);
+        }
+        this.bossSpiralAngle += 0.18 + (1 - healthRatio) * 0.08;
+        this.lastBossFired = time + fireInterval * 1.1;
+        break;
+      }
+    }
+  }
+
+  private fireBossProjectile(x: number, y: number, angle: number, speed: number) {
+    const l = this.enemyBullets.get(x, y, 'bossLaser');
+    if (l) {
+      l.enableBody(true, x, y, true, true);
+      l.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+      l.setData('isLow', false);
+      l.setScale(1.5);
+      l.setDepth(14);
+    }
   }
 
   private hitBoss(bullet: any, boss: any) {

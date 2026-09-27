@@ -26,7 +26,7 @@ export interface BossHost {
   banner(text: string, color?: string, ms?: number): void;
   dropPowerup(x: number, y: number): void;
   addScore(points: number, x: number, y: number): void;
-  onBossDefeated(): void;
+  onBossDefeated(boss: Boss, escaped?: boolean): void;
 }
 
 type AttackId = 'sweep' | 'fan' | 'aimed' | 'ring' | 'wall' | 'spiral' | 'beam' | 'mines' | 'summon' | 'rain' | 'charge';
@@ -43,36 +43,84 @@ interface Variant {
   hp: number;
   coreRadius: number;
   pods: Array<[number, number]>; // mount offsets from the core (ignored when orbiting)
+  podHp: number;
   orbit: boolean;
+  orbitR?: [number, number];     // orbit radii (x, y)
   favors: Partial<Record<AttackId, number>>; // attack weight multipliers — gives each boss a personality
 }
 
 const VARIANTS: Variant[] = [
   {
     name: 'HYDRA', texture: 'bossHydra', color: COLORS.NEON_YELLOW, colorHex: HEX.YELLOW, bulletTex: 'orbYellow',
-    hp: 440, coreRadius: 50, pods: [[-80, 2], [80, 2]], orbit: false,
+    hp: 440, coreRadius: 50, pods: [[-80, 2], [80, 2]], podHp: 45, orbit: false,
     favors: { sweep: 2, spiral: 1.6, aimed: 1.6, summon: 1.3 },
   },
   {
     name: 'MONOLITH', texture: 'bossMonolith', color: COLORS.NEON_ORANGE, colorHex: HEX.ORANGE, bulletTex: 'orbOrange',
-    hp: 500, coreRadius: 60, pods: [[-78, 58], [78, 58]], orbit: false,
+    hp: 500, coreRadius: 60, pods: [[-78, 58], [78, 58]], podHp: 45, orbit: false,
     favors: { wall: 2.2, rain: 1.8, beam: 1.8, mines: 1.6 },
   },
   {
     name: 'SERAPH', texture: 'bossSeraph', color: COLORS.NEON_MAGENTA, colorHex: HEX.MAGENTA, bulletTex: 'orbMagenta',
-    hp: 400, coreRadius: 68, pods: [[0, 0], [0, 0], [0, 0]], orbit: true,
+    hp: 400, coreRadius: 68, pods: [[0, 0], [0, 0], [0, 0]], podHp: 45, orbit: true,
     favors: { ring: 2.2, spiral: 1.8, summon: 1.6, charge: 1.6 },
   },
 ];
 
-// Attacks unlocked per phase (phase 3 = OVERDRIVE)
-const PHASE_ATTACKS: AttackId[][] = [
-  ['sweep', 'fan', 'aimed', 'ring', 'wall'],
-  ['sweep', 'fan', 'aimed', 'ring', 'wall', 'spiral', 'beam', 'mines', 'summon', 'rain'],
-  ['sweep', 'fan', 'aimed', 'ring', 'wall', 'spiral', 'beam', 'mines', 'summon', 'rain', 'charge'],
+// Smaller ships that show up at the halfway point
+const MID_VARIANTS: Variant[] = [
+  {
+    name: 'WARDEN', texture: 'bossWarden', color: COLORS.NEON_RED, colorHex: HEX.RED, bulletTex: 'orbRed',
+    hp: 170, coreRadius: 38, pods: [[-60, 12], [60, 12]], podHp: 28, orbit: false,
+    favors: { aimed: 1.8, fan: 1.5, wall: 1.5 },
+  },
+  {
+    name: 'STINGER', texture: 'bossStinger', color: COLORS.NEON_ORANGE, colorHex: HEX.ORANGE, bulletTex: 'orbOrange',
+    hp: 150, coreRadius: 40, pods: [[0, 0], [0, 0]], podHp: 28, orbit: true, orbitR: [76, 60],
+    favors: { ring: 1.8, sweep: 1.6, summon: 1.4 },
+  },
 ];
 
-const POD_HP = 45;
+export type BossTier = 'mid' | 'final';
+
+interface TierConfig {
+  variants: Variant[];
+  phaseAt: number[];     // HP ratios at which the next phase starts
+  attacks: AttackId[][]; // attacks unlocked per phase
+  intensity: number;     // base bullet speed / fire-rate multiplier
+  podScale: number;
+  podScore: number;
+  timeout: number;       // ms after arrival before it retreats (0 = fights to the death)
+}
+
+const TIERS: Record<BossTier, TierConfig> = {
+  mid: {
+    variants: MID_VARIANTS,
+    phaseAt: [1 / 2],
+    attacks: [
+      ['sweep', 'fan', 'aimed', 'ring'],
+      ['sweep', 'fan', 'aimed', 'ring', 'wall', 'summon', 'mines'],
+    ],
+    intensity: 0.85,
+    podScale: 0.8,
+    podScore: 1000,
+    timeout: 50000,
+  },
+  final: {
+    variants: VARIANTS,
+    phaseAt: [2 / 3, 1 / 3], // the third phase is OVERDRIVE
+    attacks: [
+      ['sweep', 'fan', 'aimed', 'ring', 'wall'],
+      ['sweep', 'fan', 'aimed', 'ring', 'wall', 'spiral', 'beam', 'mines', 'summon', 'rain'],
+      ['sweep', 'fan', 'aimed', 'ring', 'wall', 'spiral', 'beam', 'mines', 'summon', 'rain', 'charge'],
+    ],
+    intensity: 1,
+    podScale: 1,
+    podScore: 2500,
+    timeout: 0,
+  },
+};
+
 const ARMOR = 0.35; // damage multiplier on the core while any pod survives
 const BAR_W = 300;
 const HOME_Y = 185; // boss cruising altitude, clear of the HUD
@@ -87,6 +135,10 @@ export class Boss {
   phase = 0;
   arrived = false;
   dead = false;
+
+  private cfg: TierConfig;
+  private retreatAt = Infinity;
+  private shownSecs = -1;
 
   private attack: Attack | null = null;
   private extra: Attack | null = null; // overdrive can layer a second attack on top
@@ -109,8 +161,9 @@ export class Boss {
   private status: any;
   private ticks: any[] = [];
 
-  constructor(private scene: any, private host: BossHost) {
-    this.variant = pick(VARIANTS);
+  constructor(private scene: any, private host: BossHost, readonly tier: BossTier = 'final') {
+    this.cfg = TIERS[tier];
+    this.variant = pick(this.cfg.variants);
     this.designation = `${this.variant.name}-${randInt(2, 9)}${String.fromCharCode(65 + randInt(0, 25))}`;
     this.maxHp = this.hp = Math.round(this.variant.hp * rand(0.9, 1.1));
     this.orbitSpeed = rand(0.8, 1.2) * (chance(0.5) ? 1 : -1);
@@ -129,9 +182,9 @@ export class Boss {
       pod.part = 'pod';
       pod.mount = mount;
       pod.index = i;
-      pod.hp = POD_HP;
+      pod.hp = this.variant.podHp;
       pod.nextShot = 0;
-      pod.setTint(color).setDepth(12);
+      pod.setTint(color).setScale(this.cfg.podScale).setDepth(12);
       pod.body.setCircle(18, pod.width / 2 - 18, pod.height / 2 - 18);
       pod.body.enable = false;
       this.pods.push(pod);
@@ -144,7 +197,7 @@ export class Boss {
     this.label = scene.add.text(GAME_WIDTH / 2, 60, `▼ ${this.designation} ▼`, { fontFamily: font, fontSize: '14px', color: colorHex, fontStyle: 'bold italic' }).setOrigin(0.5).setDepth(55);
     this.barBg = scene.add.rectangle(GAME_WIDTH / 2, 75, BAR_W, 8, 0x000000, 0.7).setStrokeStyle(1.5, color).setDepth(55);
     this.bar = scene.add.rectangle(GAME_WIDTH / 2 - BAR_W / 2, 75, BAR_W, 8, color).setOrigin(0, 0.5).setDepth(56);
-    for (const f of [1 / 3, 2 / 3]) {
+    for (const f of this.cfg.phaseAt) {
       this.ticks.push(scene.add.rectangle(GAME_WIDTH / 2 - BAR_W / 2 + BAR_W * f, 75, 2, 12, 0xffffff, 0.8).setDepth(57));
     }
     this.status = scene.add.text(GAME_WIDTH / 2, 88, 'CORE SHIELDED — DESTROY PODS', { fontFamily: font, fontSize: '11px', color: HEX.CYAN }).setOrigin(0.5).setDepth(55);
@@ -158,6 +211,7 @@ export class Boss {
         this.arrived = true;
         const gt = this.host.gt;
         this.restUntil = gt + 700;
+        if (this.cfg.timeout) this.retreatAt = gt + this.cfg.timeout;
         [this.core, ...this.pods].forEach(p => {
           p.body.enable = true;
           p.body.reset(p.x, p.y);
@@ -177,6 +231,18 @@ export class Boss {
     this.restoreFlashes(gt);
     this.drawAura(gt);
     if (!this.arrived) return;
+
+    if (gt > this.retreatAt) {
+      this.retreat();
+      return;
+    }
+    if (this.cfg.timeout) {
+      const secs = Math.ceil((this.retreatAt - gt) / 1000);
+      if (secs !== this.shownSecs) {
+        this.shownSecs = secs;
+        this.label.setText(`▼ ${this.designation} ▼  ${secs}s`);
+      }
+    }
 
     this.updateMovement(dt);
     if (gt < this.transitionUntil) return;
@@ -203,8 +269,9 @@ export class Boss {
       if (!pod.active) return;
       if (this.variant.orbit) {
         const a = this.orbitAngle + (Math.PI * 2 * i) / n;
-        pod.x = this.core.x + Math.cos(a) * 110;
-        pod.y = this.core.y + Math.sin(a) * 86;
+        const [rx, ry] = this.variant.orbitR ?? [110, 86];
+        pod.x = this.core.x + Math.cos(a) * rx;
+        pod.y = this.core.y + Math.sin(a) * ry;
       } else {
         pod.x = this.core.x + pod.mount[0];
         pod.y = this.core.y + pod.mount[1] + Math.sin(this.host.gt / 400 + i * 2) * 4;
@@ -220,7 +287,7 @@ export class Boss {
       this.fx.lineStyle(2, COLORS.NEON_CYAN, 0.25 + 0.15 * Math.sin(gt / 120));
       this.fx.strokeCircle(x, y, r + 8);
     }
-    if (this.phase === 2) {
+    if (this.overdrive) {
       this.fx.lineStyle(3, COLORS.NEON_RED, 0.35 + 0.3 * Math.sin(gt / 70));
       this.fx.strokeCircle(x, y, r + 16 + Math.sin(gt / 90) * 4);
     }
@@ -278,15 +345,19 @@ export class Boss {
     this.flash(part, gt);
     this.bar.width = BAR_W * Math.max(0, this.hp / this.maxHp);
 
-    const ratio = this.hp / this.maxHp;
+    const nextPhaseAt = this.cfg.phaseAt[this.phase];
     if (this.hp <= 0) this.die();
-    else if (this.phase === 0 && ratio < 2 / 3) this.enterPhase(1);
-    else if (this.phase === 1 && ratio < 1 / 3) this.enterPhase(2);
+    else if (nextPhaseAt !== undefined && this.hp / this.maxHp < nextPhaseAt) this.enterPhase(this.phase + 1);
   }
 
   bombHit() {
     this.hit(this.core, 30);
     this.pods.forEach(p => p.active && this.hit(p, 25));
+  }
+
+  // The final boss's last phase
+  private get overdrive() {
+    return this.tier === 'final' && this.phase === 2;
   }
 
   private podsAlive() {
@@ -313,7 +384,7 @@ export class Boss {
 
   private destroyPod(pod: any) {
     this.host.explode(pod.x, pod.y, this.variant.color, 'medium');
-    this.host.addScore(2500, pod.x, pod.y);
+    this.host.addScore(this.cfg.podScore, pod.x, pod.y);
     this.host.dropPowerup(pod.x, pod.y);
     pod.disableBody(true, true);
     if (!this.podsAlive()) {
@@ -335,7 +406,9 @@ export class Boss {
     sfx.warn();
     this.orbitSpeed *= chance(0.5) ? -1 : 1;
 
-    if (phase === 1) {
+    if (this.tier === 'mid') {
+      this.host.banner(`${this.variant.name} ENRAGED`, this.variant.colorHex, 1200);
+    } else if (!this.overdrive) {
       this.host.banner('PHASE 2', this.variant.colorHex, 1200);
     } else {
       this.host.banner('!! OVERDRIVE !!', HEX.RED, 1400);
@@ -346,7 +419,7 @@ export class Boss {
           if (this.dead) return;
           lost.forEach(p => {
             p.enableBody(true, this.core.x, this.core.y, true, true);
-            p.hp = POD_HP / 2;
+            p.hp = this.variant.podHp / 2;
             p.setTint(this.variant.color);
             p.nextShot = this.host.gt + rand(600, 1500);
           });
@@ -357,7 +430,8 @@ export class Boss {
     }
   }
 
-  private die() {
+  // Stops the fight and returns the parts still flying
+  private shutdown() {
     this.dead = true;
     this.attack = null;
     this.extra = null;
@@ -365,42 +439,62 @@ export class Boss {
     this.scene.tweens.killTweensOf(this.core);
     const parts = [this.core, ...this.pods.filter(p => p.active)];
     parts.forEach(p => (p.body.enable = false));
-    this.host.clearEnemyBullets();
     [this.label, this.barBg, this.bar, this.status, ...this.ticks].forEach(o => o.destroy());
+    return parts;
+  }
+
+  // Mid-boss only: flies off if the player takes too long
+  private retreat() {
+    const parts = this.shutdown();
+    this.scene.tweens.add({
+      targets: parts, y: '-=460', duration: 1500, ease: 'Cubic.easeIn',
+      onComplete: () => {
+        parts.forEach(p => p.destroy());
+        this.fx.destroy();
+      },
+    });
+    this.host.onBossDefeated(this, true);
+  }
+
+  private die() {
+    const parts = this.shutdown();
+    this.host.clearEnemyBullets();
 
     const { color } = this.variant;
-    for (let i = 0; i < 16; i++) {
+    const blasts = this.tier === 'mid' ? 8 : 16;
+    for (let i = 0; i < blasts; i++) {
       this.scene.time.delayedCall(i * 140, () => {
         const p = i < parts.length ? parts[i] : this.core;
         this.host.explode(p.x + rand(-80, 80), p.y + rand(-60, 60), i % 3 ? color : COLORS.NEON_CYAN, 'medium');
       });
     }
-    this.scene.tweens.add({ targets: parts, alpha: 0.25, duration: 2300 });
-    this.scene.time.delayedCall(2300, () => {
+    const finale = blasts * 140 + 80;
+    this.scene.tweens.add({ targets: parts, alpha: 0.25, duration: finale });
+    this.scene.time.delayedCall(finale, () => {
       this.host.explode(this.core.x, this.core.y, color, 'large');
-      this.scene.cameras.main.flash(400, 255, 255, 255);
+      if (this.tier === 'final') this.scene.cameras.main.flash(400, 255, 255, 255);
       parts.forEach(p => p.destroy());
       this.fx.destroy();
     });
-    this.host.onBossDefeated();
+    this.host.onBossDefeated(this);
   }
 
   // ---------- attack selection ----------
 
   private startNextAttack() {
-    const pool = PHASE_ATTACKS[this.phase].filter(a => a !== this.lastAttack);
+    const pool = this.cfg.attacks[this.phase].filter(a => a !== this.lastAttack);
     const id = weightedPick(pool, pool.map(a => this.variant.favors[a] ?? 1));
     this.lastAttack = id;
     this.attack = this.makeAttack(id);
 
     // In overdrive, sometimes layer a light attack on top
-    if (this.phase === 2 && !this.extra && chance(0.35) && !['beam', 'charge', 'wall'].includes(id)) {
+    if (this.overdrive && !this.extra && chance(0.35) && !['beam', 'charge', 'wall'].includes(id)) {
       this.extra = this.makeAttack(pick<AttackId>(['aimed', 'ring', 'fan']));
     }
   }
 
   private get intensity() {
-    return 1 + this.phase * 0.22;
+    return this.cfg.intensity + this.phase * 0.22;
   }
 
   private get mouth() {

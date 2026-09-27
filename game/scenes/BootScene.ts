@@ -180,6 +180,7 @@ export class BootScene extends window.Phaser.Scene {
     orb('orbYellow', COLORS.NEON_YELLOW, 24);
     orb('orbOrange', COLORS.NEON_ORANGE, 24);
     orb('orbMagenta', COLORS.NEON_MAGENTA, 24);
+    orb('orbRed', COLORS.NEON_RED, 24);
 
     this.tex('needle', 12, 30, g => {
       g.fillStyle(COLORS.NEON_RED, 0.2);
@@ -286,6 +287,26 @@ export class BootScene extends window.Phaser.Scene {
       this.neonPoly(g, star(100, 100, 42, 26, 6, Math.PI / 2), COLORS.NEON_MAGENTA, 1.5, 0.5);
       this.neonCircle(g, 100, 100, 16, COLORS.NEON_YELLOW, 2, COLORS.NEON_YELLOW, 0.35);
       this.glowDot(g, 100, 100, 6, COLORS.NEON_WHITE);
+    });
+
+    // Mid-bosses
+    // WARDEN — red arrowhead gunship
+    this.tex('bossWarden', 150, 112, g => {
+      const hull = pts(75, 106, 98, 80, 140, 64, 128, 30, 96, 40, 75, 6, 54, 40, 22, 30, 10, 64, 52, 80);
+      this.neonPoly(g, hull, COLORS.NEON_RED, 3);
+      this.neonPoly(g, pts(75, 88, 88, 60, 75, 28, 62, 60), COLORS.NEON_YELLOW, 1.5, 0.5);
+      this.neonLine(g, 100, 58, 130, 58, COLORS.NEON_RED, 1.5);
+      this.neonLine(g, 50, 58, 20, 58, COLORS.NEON_RED, 1.5);
+      this.neonCircle(g, 75, 56, 11, COLORS.NEON_YELLOW, 2, COLORS.NEON_YELLOW, 0.35);
+      this.glowDot(g, 75, 56, 5, COLORS.NEON_WHITE);
+    });
+
+    // STINGER — four-point star with orbiting pods
+    this.tex('bossStinger', 132, 132, g => {
+      this.neonPoly(g, star(66, 66, 58, 30, 4, Math.PI / 2), COLORS.NEON_ORANGE, 3);
+      this.neonCircle(g, 66, 66, 24, COLORS.NEON_MAGENTA, 2, 0x000000, 0.6);
+      this.neonPoly(g, regular(66, 66, 14, 4, Math.PI / 4), COLORS.NEON_ORANGE, 1.5, 0.5);
+      this.glowDot(g, 66, 66, 5, COLORS.NEON_YELLOW);
     });
 
     // Weapon pod — drawn white so each boss variant can tint it

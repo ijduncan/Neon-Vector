@@ -1,5 +1,5 @@
 import { COLORS, HEX, SceneKeys, GAME_WIDTH, GAME_HEIGHT } from '../../types';
-import { Boss, type BossHost, type BulletOpts } from '../Boss';
+import { Boss, type BossHost, type BossTier, type BulletOpts } from '../Boss';
 import { ENEMIES, FORMATIONS, type EnemyAI, type EnemyKind, type FormationId } from '../enemies';
 import { sfx } from '../Sfx';
 import { saveBest } from '../storage';
@@ -11,6 +11,7 @@ const H = GAME_HEIGHT;
 const FONT = '"Share Tech Mono"';
 
 const BOSS_TIME = 180000;
+const MID_BOSS_TIME = BOSS_TIME / 2;
 const SECTOR_TIME = 45000; // sector banner + breach reset every 45s
 // Seconds between formations, from the start of the run to just before the boss
 const SPAWN_GAP_START = 3.4;
@@ -69,7 +70,10 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
 
   // Boss
   private boss: Boss | null = null;
-  private bossTriggered = false;
+  private bossTriggered = false; // final boss
+  private bossIncoming = false;  // warning is showing, boss not spawned yet
+  private midBossDone = false;
+  private levelTime = 0;         // like gt, but frozen during boss fights — drives the wave ramp
   private victory = false;
 
   // Run state
@@ -240,6 +244,7 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
     this.grid.tilePositionY -= this.scrollSpeed * dt;
 
     this.updatePlayer(dt);
+    if (!this.wavesPaused) this.levelTime += dt * 1000;
     this.updateDirector();
     this.updateEnemies(dt);
     this.updateBullets();
@@ -459,7 +464,12 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
 
   // 0 at the start of the run, 1 when the boss arrives
   private get progress() {
-    return Math.min(1, this.gt / BOSS_TIME);
+    return Math.min(1, this.levelTime / BOSS_TIME);
+  }
+
+  // Regular waves stop while a boss is incoming or on screen
+  private get wavesPaused() {
+    return this.bossTriggered || this.bossIncoming || !!this.boss;
   }
 
   // Formation size that grows from `min` to `max` over the run
@@ -468,16 +478,21 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
   }
 
   private updateDirector() {
-    if (this.bossTriggered) return;
+    if (this.wavesPaused) return;
     const p = this.progress;
     this.difficulty = 1 + p;
     this.hud.progress.width = 110 * p;
-    if (this.gt >= BOSS_TIME) {
-      this.triggerBoss();
+    if (this.levelTime >= BOSS_TIME) {
+      this.triggerBoss('final');
+      return;
+    }
+    if (!this.midBossDone && this.levelTime >= MID_BOSS_TIME) {
+      this.midBossDone = true;
+      this.triggerBoss('mid');
       return;
     }
 
-    const sector = 1 + Math.floor(this.gt / SECTOR_TIME);
+    const sector = 1 + Math.floor(this.levelTime / SECTOR_TIME);
     if (sector > this.sector) {
       this.sector = sector;
       this.breaches = 0;
@@ -489,12 +504,12 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
     if (this.gt < this.nextFormationAt) return;
     this.launchFormation();
     // Late in the run, formations start arriving in pairs
-    if (p > 0.7 && chance((p - 0.7) * 0.8)) this.time.delayedCall(700, () => !this.bossTriggered && this.launchFormation());
+    if (p > 0.7 && chance((p - 0.7) * 0.8)) this.time.delayedCall(700, () => !this.wavesPaused && this.launchFormation());
     this.nextFormationAt = this.gt + Phaser.Math.Linear(SPAWN_GAP_START, SPAWN_GAP_END, p) * 1000 * rand(0.85, 1.15);
   }
 
   private launchFormation() {
-    const secs = this.gt / 1000;
+    const secs = this.levelTime / 1000;
     const unlocked = FORMATIONS.filter(f => secs >= f.from);
     // Avoid repeating the last formation, unless it's the only one unlocked yet
     const fresh = unlocked.filter(f => f.id !== this.lastFormation);
@@ -509,7 +524,7 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
     const isLow = chance(lowChance);
     const later = (ms: number, fn: () => void) =>
       this.time.delayedCall(ms, () => {
-        if (!this.bossTriggered) fn();
+        if (!this.wavesPaused) fn();
       });
 
     switch (id) {
@@ -675,7 +690,7 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
   private enemyEscaped(e: any) {
     const ai: EnemyAI = e.ai;
     e.destroy();
-    if (!ENEMIES[ai.kind].breach || ai.minion || this.bossTriggered || !this.playerAlive()) return;
+    if (!ENEMIES[ai.kind].breach || ai.minion || this.wavesPaused || !this.playerAlive()) return;
     this.breaches++;
     this.refreshHud();
     this.tweens.add({ targets: this.hud.breach, scale: 1.4, duration: 90, yoyo: true });
@@ -899,9 +914,12 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
 
   // ---------- boss ----------
 
-  private triggerBoss() {
-    this.bossTriggered = true;
-    this.hud.threat.forEach((o: any) => o.setVisible(false));
+  private triggerBoss(tier: BossTier) {
+    this.bossIncoming = true;
+    if (tier === 'final') {
+      this.bossTriggered = true;
+      this.hud.threat.forEach((o: any) => o.setVisible(false));
+    }
     for (const e of this.enemies.getChildren().slice()) {
       this.explode(e.x, e.y, ENEMIES[e.ai.kind as EnemyKind].color);
       e.destroy();
@@ -909,14 +927,19 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
     this.clearEnemyBullets();
     this.refreshHud();
     sfx.warn();
-    this.banner('WARNING // BOSS APPROACHING', HEX.RED, 2600);
+    this.banner(tier === 'final' ? 'WARNING // BOSS APPROACHING' : 'WARNING // HEAVY UNIT INBOUND', HEX.RED, 2600);
     this.time.delayedCall(2800, () => {
-      this.boss = new Boss(this, this);
+      this.bossIncoming = false;
+      this.boss = new Boss(this, this, tier);
       this.grid.setTint(this.boss.variant.color);
     });
   }
 
-  onBossDefeated() {
+  onBossDefeated(boss: Boss, escaped = false) {
+    if (boss.tier === 'mid') {
+      this.onMidBossOver(boss, escaped);
+      return;
+    }
     this.victory = true;
     for (const e of this.enemies.getChildren().slice()) {
       this.explode(e.x, e.y, ENEMIES[e.ai.kind as EnemyKind].color);
@@ -931,6 +954,23 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
     this.time.delayedCall(7000, () => {
       window.location.href = PORTFOLIO_URL;
     });
+  }
+
+  private onMidBossOver(boss: Boss, escaped: boolean) {
+    this.boss = null;
+    this.nextFormationAt = this.gt + 3000;
+    this.refreshHud();
+    this.time.delayedCall(escaped ? 1500 : 1300, () => {
+      if (!this.boss) this.grid.clearTint();
+    });
+    if (escaped) {
+      this.banner(`${boss.designation} ESCAPED`, HEX.YELLOW, 1400);
+      return;
+    }
+    const { x, y } = boss.core;
+    this.addScore(15000, x, y);
+    for (let i = 0; i < 3; i++) this.time.delayedCall(300 + i * 200, () => this.dropPowerup(x + rand(-60, 60), y + rand(-20, 20)));
+    this.time.delayedCall(1300, () => this.banner('HEAVY UNIT DESTROYED', HEX.CYAN, 1400));
   }
 
   // ---------- fx ----------
@@ -1002,7 +1042,7 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
     h.lives.forEach((img: any, i: number) => img.setVisible(i < this.lives));
     h.bombs.forEach((img: any, i: number) => img.setVisible(i < this.bombs));
     h.breach
-      .setText(this.bossTriggered ? '' : `BREACH ${this.breaches}/${MAX_BREACH}`)
+      .setText(this.wavesPaused ? '' : `BREACH ${this.breaches}/${MAX_BREACH}`)
       .setColor(this.breaches >= MAX_BREACH - 3 ? HEX.RED : HEX.YELLOW);
   }
 }

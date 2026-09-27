@@ -39,6 +39,7 @@ Phaser → React: Game events (game over, score updates) flow back through regis
 - **Weapon levels 1-8**: table-driven (`WEAPONS` in MainScene) from single shot to 6-way spread
 - **Enemies**: Dart, Weaver, Bomber, Sentinel, Seeker, spawned in formations unlocked over time (`FORMATIONS` in enemies.ts). Enemies with `breach: true` that escape count toward BREACH (12 = lose a life).
 - **Boss battle**: Triggers after 3 minutes (`BOSS_TIME`); the wave director ramps spawn rate and formation size from a 0→1 `progress` value, with a sector banner (and BREACH reset) every 45s. At the halfway point a **mid-boss** (WARDEN or STINGER, `tier: 'mid'` in Boss.ts) appears: smaller, 2 phases, retreats after 50s; the level clock (`levelTime`) is frozen during any boss fight. One of 3 variants (HYDRA / MONOLITH / SERAPH) with destructible pods (core takes reduced damage while pods live), 3 HP phases, and 11 attacks chosen by weighted random with randomized parameters. Beam attacks hit only high altitude; mines hit only low altitude. Defeat redirects to the portfolio site.
+- **Tuning**: player damage values are `DAMAGE` in `game/enemies.ts`; drop rates are `drop` per enemy there plus `WEAPON_PITY_MS` in MainScene; boss difficulty is `VARIANTS`/`TIERS` in `game/Boss.ts`
 - **Other**: bombs (B/X), shield, combo multiplier, i-frames, pause (ESC), mute (M), touch controls (drag + ALT/BOMB buttons)
 - **All sprites are procedurally generated** in BootScene — to add new visuals, generate textures there
 

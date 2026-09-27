@@ -1,6 +1,6 @@
 import { COLORS, HEX, SceneKeys, GAME_WIDTH, GAME_HEIGHT } from '../../types';
 import { Boss, type BossHost, type BossTier, type BulletOpts } from '../Boss';
-import { ENEMIES, FORMATIONS, type EnemyAI, type EnemyKind, type FormationId } from '../enemies';
+import { DAMAGE, ENEMIES, FORMATIONS, type EnemyAI, type EnemyKind, type FormationId } from '../enemies';
 import { sfx } from '../Sfx';
 import { saveBest } from '../storage';
 import { rand, randInt, chance, pick, weightedPick } from '../rand';
@@ -20,7 +20,9 @@ const MAX_BREACH = 12;
 const MAX_LIVES = 5;
 const MAX_BOMBS = 5;
 const COMBO_WINDOW = 2000;
-const WEAPON_PITY_MS = 14000; // guarantees a weapon drop if none has appeared for this long
+const WEAPON_PITY_MS = 30000; // guarantees a weapon drop if none has appeared for this long
+const HEAL_AMOUNT = 25;
+const SHIELD_MS = 6000;
 const LOW_SCALE = 0.62;
 const PORTFOLIO_URL = 'https://ianjamesduncan.com';
 
@@ -376,7 +378,7 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
 
     this.health -= amount;
     this.combo = 0;
-    this.invulnUntil = this.gt + 800;
+    this.invulnUntil = this.gt + 700;
     this.cameras.main.shake(140, 0.012);
     this.cameras.main.flash(90, 255, 23, 68);
     sfx.hurt();
@@ -824,19 +826,19 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
   private onPlayerHitsEnemy(_p: any, e: any) {
     if (!e.active || e.ai.isLow !== this.isLowAltitude || !this.playerAlive() || this.gt < this.invulnUntil) return;
     const heavy = e.ai.kind === 'bomber' || e.ai.kind === 'sentinel';
-    this.damagePlayer(heavy ? 35 : 20);
+    this.damagePlayer(heavy ? DAMAGE.heavyCrash : DAMAGE.crash);
     this.killEnemy(e);
   }
 
   private onPlayerHitsBullet(_p: any, b: any) {
     if (!b.active || b.isLow !== this.isLowAltitude || !this.playerAlive() || this.gt < this.invulnUntil) return;
     b.disableBody(true, true);
-    this.damagePlayer(b.texture.key === 'needle' ? 15 : 10);
+    this.damagePlayer(b.texture.key === 'needle' ? DAMAGE.needle : DAMAGE.bullet);
   }
 
   private onPlayerHitsBoss() {
     if (this.isLowAltitude || !this.playerAlive()) return;
-    this.damagePlayer(25);
+    this.damagePlayer(DAMAGE.bossContact);
   }
 
   // ---------- powerups ----------
@@ -847,7 +849,7 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
 
   dropPowerup(x: number, y: number) {
     const kinds: PowerupKind[] = ['puWeapon', 'puHealth', 'puShield', 'puBomb'];
-    const kind = this.weaponDropDue ? 'puWeapon' : weightedPick(kinds, [50, this.health < 60 ? 35 : 18, 14, 12]);
+    const kind = this.weaponDropDue ? 'puWeapon' : weightedPick(kinds, [25, this.health < 60 ? 35 : 20, 14, 12]);
     if (kind === 'puWeapon') this.lastWeaponDropAt = this.gt;
     const pu = this.powerups.create(x, y, kind);
     pu.kind = kind;
@@ -894,11 +896,11 @@ export class MainScene extends window.Phaser.Scene implements BossHost {
         }
         break;
       case 'puHealth':
-        this.health = Math.min(100, this.health + 35);
-        this.popText(x, y, 'HULL +35', HEX.YELLOW);
+        this.health = Math.min(100, this.health + HEAL_AMOUNT);
+        this.popText(x, y, `HULL +${HEAL_AMOUNT}`, HEX.YELLOW);
         break;
       case 'puShield':
-        this.shieldUntil = Math.max(this.shieldUntil, this.gt) + 8000;
+        this.shieldUntil = Math.max(this.shieldUntil, this.gt) + SHIELD_MS;
         this.popText(x, y, 'SHIELD', HEX.MAGENTA);
         break;
       case 'puBomb':

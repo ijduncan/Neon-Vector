@@ -1,5 +1,6 @@
 import { COLORS, HEX, GAME_WIDTH, GAME_HEIGHT } from '../types';
 import { sfx } from './Sfx';
+import { DAMAGE } from './enemies';
 import { rand, randInt, chance, pick, weightedPick } from './rand';
 
 const Phaser = window.Phaser;
@@ -52,17 +53,17 @@ interface Variant {
 const VARIANTS: Variant[] = [
   {
     name: 'HYDRA', texture: 'bossHydra', color: COLORS.NEON_YELLOW, colorHex: HEX.YELLOW, bulletTex: 'orbYellow',
-    hp: 440, coreRadius: 50, pods: [[-80, 2], [80, 2]], podHp: 45, orbit: false,
+    hp: 620, coreRadius: 50, pods: [[-80, 2], [80, 2]], podHp: 70, orbit: false,
     favors: { sweep: 2, spiral: 1.6, aimed: 1.6, summon: 1.3 },
   },
   {
     name: 'MONOLITH', texture: 'bossMonolith', color: COLORS.NEON_ORANGE, colorHex: HEX.ORANGE, bulletTex: 'orbOrange',
-    hp: 500, coreRadius: 60, pods: [[-78, 58], [78, 58]], podHp: 45, orbit: false,
+    hp: 700, coreRadius: 60, pods: [[-78, 58], [78, 58]], podHp: 70, orbit: false,
     favors: { wall: 2.2, rain: 1.8, beam: 1.8, mines: 1.6 },
   },
   {
     name: 'SERAPH', texture: 'bossSeraph', color: COLORS.NEON_MAGENTA, colorHex: HEX.MAGENTA, bulletTex: 'orbMagenta',
-    hp: 400, coreRadius: 68, pods: [[0, 0], [0, 0], [0, 0]], podHp: 45, orbit: true,
+    hp: 560, coreRadius: 68, pods: [[0, 0], [0, 0], [0, 0]], podHp: 60, orbit: true,
     favors: { ring: 2.2, spiral: 1.8, summon: 1.6, charge: 1.6 },
   },
 ];
@@ -88,6 +89,9 @@ interface TierConfig {
   phaseAt: number[];     // HP ratios at which the next phase starts
   attacks: AttackId[][]; // attacks unlocked per phase
   intensity: number;     // base bullet speed / fire-rate multiplier
+  restScale: number;     // multiplier on the pause between attacks
+  armor: number;         // damage multiplier on the core while any pod survives
+  overdriveExtra: number; // chance of layering a second attack in overdrive
   podScale: number;
   podScore: number;
   timeout: number;       // ms after arrival before it retreats (0 = fights to the death)
@@ -102,6 +106,9 @@ const TIERS: Record<BossTier, TierConfig> = {
       ['sweep', 'fan', 'aimed', 'ring', 'wall', 'summon', 'mines'],
     ],
     intensity: 0.85,
+    restScale: 1,
+    armor: 0.35,
+    overdriveExtra: 0,
     podScale: 0.8,
     podScore: 1000,
     timeout: 50000,
@@ -114,14 +121,16 @@ const TIERS: Record<BossTier, TierConfig> = {
       ['sweep', 'fan', 'aimed', 'ring', 'wall', 'spiral', 'beam', 'mines', 'summon', 'rain'],
       ['sweep', 'fan', 'aimed', 'ring', 'wall', 'spiral', 'beam', 'mines', 'summon', 'rain', 'charge'],
     ],
-    intensity: 1,
+    intensity: 1.15,
+    restScale: 0.65,
+    armor: 0.25,
+    overdriveExtra: 0.55,
     podScale: 1,
     podScore: 2500,
     timeout: 0,
   },
 };
 
-const ARMOR = 0.35; // damage multiplier on the core while any pod survives
 const BAR_W = 300;
 const HOME_Y = 185; // boss cruising altitude, clear of the HUD
 
@@ -253,7 +262,7 @@ export class Boss {
       if (this.attack(dt)) {
         this.attack = null;
         this.holdPosition = false;
-        this.restUntil = gt + rand(450, 1200) * (1 - this.phase * 0.25);
+        this.restUntil = gt + rand(450, 1200) * (1 - this.phase * 0.25) * this.cfg.restScale;
       }
     } else if (gt > this.restUntil) {
       this.startNextAttack();
@@ -315,7 +324,7 @@ export class Boss {
     const gt = this.host.gt;
     for (const pod of this.pods) {
       if (!pod.active || gt < pod.nextShot) continue;
-      pod.nextShot = gt + rand(1300, 2600) / (1 + this.phase * 0.3);
+      pod.nextShot = gt + rand(1300, 2600) / (this.intensity + this.phase * 0.1);
       const a = this.angleToPlayer(pod.x, pod.y);
       const speed = rand(200, 250) * this.intensity;
       if (chance(0.5)) {
@@ -341,7 +350,7 @@ export class Boss {
     }
 
     if (gt < this.transitionUntil) return;
-    this.hp -= this.podsAlive() ? dmg * ARMOR : dmg;
+    this.hp -= this.podsAlive() ? dmg * this.cfg.armor : dmg;
     this.flash(part, gt);
     this.bar.width = BAR_W * Math.max(0, this.hp / this.maxHp);
 
@@ -414,7 +423,7 @@ export class Boss {
       this.host.banner('!! OVERDRIVE !!', HEX.RED, 1400);
       // Sometimes the boss rebuilds its lost pods
       const lost = this.pods.filter(p => !p.active);
-      if (lost.length && chance(0.4)) {
+      if (lost.length && chance(0.55)) {
         this.scene.time.delayedCall(700, () => {
           if (this.dead) return;
           lost.forEach(p => {
@@ -488,7 +497,7 @@ export class Boss {
     this.attack = this.makeAttack(id);
 
     // In overdrive, sometimes layer a light attack on top
-    if (this.overdrive && !this.extra && chance(0.35) && !['beam', 'charge', 'wall'].includes(id)) {
+    if (this.overdrive && !this.extra && chance(this.cfg.overdriveExtra) && !['beam', 'charge', 'wall'].includes(id)) {
       this.extra = this.makeAttack(pick<AttackId>(['aimed', 'ring', 'fan']));
     }
   }
@@ -700,7 +709,7 @@ export class Boss {
               this.fx.fillStyle(0xffffff, 0.9);
               this.fx.fillRect(x - width * 0.18, 0, width * 0.36, GAME_HEIGHT);
               if (this.host.playerAlive() && !this.host.playerIsLow() && Math.abs(p.x - x) < width / 2 + 6) {
-                this.host.damagePlayer(25);
+                this.host.damagePlayer(DAMAGE.beam);
               }
             }
           }

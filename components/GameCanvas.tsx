@@ -30,15 +30,17 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ onGameOver, gameActive }) => {
             debug: false
           }
         },
+        input: {
+          activePointers: 3 // drag to fly + on-screen buttons at the same time
+        },
+        callbacks: {
+          // Set before any scene runs so MainScene.create() can always read it
+          preBoot: (game: any) => game.registry.set('onGameOver', onGameOver)
+        },
         scene: [BootScene, MainScene]
       };
 
-      const game = new window.Phaser.Game(config);
-      gameRef.current = game;
-
-      game.events.once('ready', () => {
-        game.registry.set('onGameOver', onGameOver);
-      });
+      gameRef.current = new window.Phaser.Game(config);
     }
 
     return () => {
@@ -52,10 +54,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ onGameOver, gameActive }) => {
   return (
     <div 
       ref={containerRef} 
-      style={{ 
-        height: '100%',
-        aspectRatio: `${GAME_WIDTH}/${GAME_HEIGHT}` 
-      }}
+      style={{ width: '100%', height: '100%' }}
       className="relative rounded-lg overflow-hidden shadow-[0_0_50px_rgba(0,188,212,0.2)] border-2 border-slate-800 bg-[#0a0a12]"
     />
   );

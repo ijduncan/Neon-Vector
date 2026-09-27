@@ -20,9 +20,13 @@ Neon Vector is a vertical scrolling arcade shooter with a cyberpunk neon aesthet
 
 **React Layer** — Manages game lifecycle (`start` → `playing` → `gameover`), renders UI overlays (start screen, game over, about modal), and wraps the Phaser instance via `GameCanvas`. Styled with Tailwind CSS (CDN).
 
-**Phaser Layer** — All game logic lives in two scenes:
-- **BootScene** (`game/scenes/BootScene.ts`) — Procedurally generates ALL visual assets using Phaser's graphics API. No external image files exist.
-- **MainScene** (`game/scenes/MainScene.ts`) — Contains the entire game loop: player control, enemy spawning, collision detection, boss battles, scoring, and HUD rendering.
+**Phaser Layer**:
+- **BootScene** (`game/scenes/BootScene.ts`) — Procedurally generates ALL visual assets using Phaser's graphics API (neon glow is baked in by layered strokes). No external image files exist.
+- **MainScene** (`game/scenes/MainScene.ts`) — Game loop: player control, wave director, enemy AI, collisions, powerups, bombs, scoring, HUD, fx. Implements `BossHost` for the boss.
+- **Boss** (`game/Boss.ts`) — Self-contained boss: random variant, pods, phases, attack patterns, its own health bar UI.
+- `game/enemies.ts` (enemy stats + formation table), `game/Sfx.ts` (procedural WebAudio sounds), `game/rand.ts`, `game/storage.ts` (guarded localStorage for best score / mute).
+
+All gameplay timers use `MainScene.gt` (game-time ms that freezes while paused), not `time.now`.
 
 ### Communication Pattern
 
@@ -31,10 +35,11 @@ Phaser → React: Game events (game over, score updates) flow back through regis
 
 ### Key Game Systems
 
-- **Altitude system**: Player toggles high (P key) / low (L key) altitude, affecting scale, speed, and collision matching
-- **Weapon levels 1-8**: Progressive upgrade from single shot to quad spread pattern
-- **Enemy types**: Darts (fast, simple) and Bombers (slower, fire at player)
-- **Boss battle**: Triggers after 60 seconds, sweeping projectile pattern, 600 HP
+- **Altitude system**: SPACE toggles (P = high, L = low). Only same-altitude objects collide; same-layer objects render bright, the other layer dims. Powerups are collectible at either altitude.
+- **Weapon levels 1-8**: table-driven (`WEAPONS` in MainScene) from single shot to 6-way spread
+- **Enemies**: Dart, Weaver, Bomber, Sentinel, Seeker, spawned in formations unlocked over time (`FORMATIONS` in enemies.ts). Enemies with `breach: true` that escape count toward BREACH (12 = lose a life).
+- **Boss battle**: Triggers after 3 minutes (`BOSS_TIME`); the wave director ramps spawn rate and formation size from a 0→1 `progress` value, with a sector banner (and BREACH reset) every 45s. One of 3 variants (HYDRA / MONOLITH / SERAPH) with destructible pods (core takes reduced damage while pods live), 3 HP phases, and 11 attacks chosen by weighted random with randomized parameters. Beam attacks hit only high altitude; mines hit only low altitude. Defeat redirects to the portfolio site.
+- **Other**: bombs (B/X), shield, combo multiplier, i-frames, pause (ESC), mute (M), touch controls (drag + ALT/BOMB buttons)
 - **All sprites are procedurally generated** in BootScene — to add new visuals, generate textures there
 
 ### Global Constants

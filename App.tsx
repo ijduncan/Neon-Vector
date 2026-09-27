@@ -1,10 +1,19 @@
 import React, { useState } from 'react';
 import GameCanvas from './components/GameCanvas';
 import { GAME_WIDTH, GAME_HEIGHT } from './types';
+import { loadBest, saveBest } from './game/storage';
+
+const CONTROLS: Array<[string, string]> = [
+  ['PILOT:', '[WASD] / CURSORS / DRAG'],
+  ['ALTITUDE:', '[SPACE] or [P / L]'],
+  ['BOMB:', '[B]'],
+  ['PAUSE / MUTE:', '[ESC] / [M]'],
+];
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<'start' | 'playing' | 'gameover'>('start');
   const [lastScore, setLastScore] = useState(0);
+  const [best, setBest] = useState(loadBest);
   const [showAbout, setShowAbout] = useState(false);
 
   const handleStartGame = () => {
@@ -13,6 +22,7 @@ const App: React.FC = () => {
 
   const handleGameOver = (score: number) => {
     setLastScore(score);
+    setBest(saveBest(score));
     setGameState('gameover');
   };
 
@@ -74,12 +84,18 @@ const App: React.FC = () => {
       </div>
 
       {/* Main Game Area */}
-      <div className="flex-1 w-full relative flex flex-col items-center justify-center min-h-0 px-2 pb-2">
+      <div
+        className="flex-1 w-full relative flex flex-col items-center justify-center min-h-0 px-2 pb-2"
+        style={{ containerType: 'size' }}
+      >
         
-        {/* Centered Game Container */}
+        {/* Centered Game Container — fits whichever dimension is tighter (portrait phones included) */}
         <div 
-          className="relative h-full max-h-full flex items-center justify-center"
-          style={{ aspectRatio: `${GAME_WIDTH}/${GAME_HEIGHT}` }}
+          className="relative flex items-center justify-center"
+          style={{
+            width: `min(100cqw, ${(100 * GAME_WIDTH) / GAME_HEIGHT}cqh)`,
+            height: `min(100cqh, ${(100 * GAME_HEIGHT) / GAME_WIDTH}cqw)`
+          }}
         >
             {/* Start Screen Overlay */}
             {gameState === 'start' && (
@@ -89,20 +105,19 @@ const App: React.FC = () => {
                 </h1>
                 <h2 className="text-sm md:text-xl text-[#00bcd4] mb-8 font-black uppercase tracking-[0.2em] border-y-2 border-[#00bcd4] py-1">VECTOR FORCE</h2>
                 
-                <div className="space-y-2 md:space-y-4 text-black mb-8 text-[11px] md:text-sm bg-white/30 p-4 md:p-6 rounded border-2 border-[#00bcd4] w-full max-w-sm font-bold">
-                  <div className="flex items-center justify-between">
-                      <span className="text-[#00bcd4] font-black underline italic">PILOT:</span>
-                      <span className="italic">[WASD] / CURSORS</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                      <span className="text-[#00bcd4] font-black underline italic">ALTITUDE:</span>
-                      <span className="italic">[P / L] TOGGLE</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                      <span className="text-[#00bcd4] font-black underline italic">STATUS:</span>
-                      <span className="italic">WEAPONS_AUTO</span>
-                  </div>
+                <div className="space-y-2 md:space-y-3 text-black mb-4 text-[11px] md:text-sm bg-white/30 p-4 md:p-6 rounded border-2 border-[#00bcd4] w-full max-w-sm font-bold">
+                  {CONTROLS.map(([label, keys]) => (
+                    <div key={label} className="flex items-center justify-between">
+                        <span className="text-[#00bcd4] font-black underline italic">{label}</span>
+                        <span className="italic">{keys}</span>
+                    </div>
+                  ))}
                 </div>
+
+                <p className="text-black text-[10px] md:text-xs font-bold italic mb-6 max-w-sm uppercase">
+                  Match altitude to hit targets. Survive 3 minutes, then destroy the boss.
+                  {best > 0 && <span className="block text-[#00bcd4] mt-1">BEST: {best}</span>}
+                </p>
 
                 <button 
                   onClick={handleStartGame}
@@ -124,6 +139,9 @@ const App: React.FC = () => {
                 <div className="mb-8 p-6 border-4 border-[#00bcd4] bg-white/50 rounded w-full max-w-[250px]">
                   <p className="text-black text-xs font-black uppercase mb-1 italic">DATA_LOG</p>
                   <p className="text-4xl md:text-6xl text-[#00bcd4] font-black italic">{lastScore}</p>
+                  <p className="text-black text-xs font-black uppercase mt-2 italic">
+                    {lastScore >= best && lastScore > 0 ? 'NEW BEST!' : `BEST: ${best}`}
+                  </p>
                 </div>
 
                 <button 
@@ -148,7 +166,7 @@ const App: React.FC = () => {
       {/* Footer (Outside Game Window) */}
       <div className="w-full flex justify-center items-center py-4 z-40 relative">
         <div className="text-[10px] md:text-xs text-[#00bcd4] font-black tracking-widest text-center uppercase italic">
-          IAN JAMES DUNCAN // NEON_VECTOR // V1.1
+          IAN JAMES DUNCAN // NEON_VECTOR // V2.0
         </div>
       </div>
     </div>
